@@ -1,73 +1,61 @@
 pipeline {
-    agent any
+    agent any // This means "run on any available Jenkins machine"
 
     // --- CONFIGURATION ---
-    // !! CHANGE THESE VALUES !!
+    // This is where we store our secret values
     environment {
-        // Paste your Container Registry name from Step 1
-        ACR_NAME           = "myuniqueacrb7bc6d0a"  // <-- EDIT THIS
-        // Paste your App Service name from Step 1
-        APP_SERVICE_NAME   = "my-unique-app-aed580fc" // <-- EDIT THIS
-        // Paste your Resource Group name from Step 1
-        RESOURCE_GROUP     = "my-cicd-rg" // <-- This is already correct
-        // The name for your Docker image
+        // !! YOU MUST EDIT THIS !!
+        // Paste your Container Registry name from Step 1C
+        ACR_NAME           = "myuniqueacrnish1011"  
+
+        // !! YOU MUST EDIT THIS !!
+        // Paste your App Service Webhook URL from Step 1E
+        WEBHOOK_URL        = "https://$myuniqueappnish1110:RZmiLBuTi6FYJikMGCsChwoBXWAm5m3mlrEoRwNBFdm9sCRyEP4Es4muynbF@myuniqueappnish1110-avbyemh2gxh2eghm.scm.malaysiawest-01.azurewebsites.net/api/registry/webhook" 
+
         IMAGE_NAME         = "my-web-app"
+        ACR_CREDS_ID       = "acr-creds" // The 'nickname' we will create in Jenkins
     }
     // ---------------------
 
-    stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
+    stages { // The list of steps for the chef
+
+        stage('Checkout') { // Step 1: Get the code
+            steps { 
+                checkout scm // This checks out the code from this GitHub repo
             }
         }
-        stage('Build & Test') {
+
+        stage('Build & Test') { // Step 2: Install dependencies and test
             steps {
                 docker.image('node:18-alpine').inside {
-                    sh 'echo "--- Installing Dependencies ---"'
-                    sh 'npm install'
-                    sh 'echo "--- Running Tests ---"'
-                    sh 'npm test'
+                    sh 'npm install' // Runs 'npm install' inside a Node container
+                    sh 'npm test'    // Runs the 'test' script from package.json
                 }
             }
         }
-        stage('Build Docker Image') {
+
+        stage('Build & Push to ACR') { // Step 3: Build the Docker image and push to Azure
             steps {
                 script {
+                    // Create unique names for the image
                     def fullImageTag = "${env.ACR_NAME}.azurecr.io/${env.IMAGE_NAME}:build-${env.BUILD_NUMBER}"
                     def latestImageTag = "${env.ACR_NAME}.azurecr.io/${env.IMAGE_NAME}:latest"
-                    sh "docker build -t ${fullImageTag} -t ${latestImageTag} ."
-                    env.FULL_IMAGE_TAG = fullImageTag
+
+                    sh "docker build -t ${fullImageTag} -t ${latestImageTag} ." // Build the image
+
+                    // Log in to Azure and push the image
+                    docker.withRegistry("https://${env.ACR_NAME}.azurecr.io", env.ACR_CREDS_ID) {
+                        sh "docker push ${fullImageTag}"
+                        sh "docker push ${latestImageTag}"
+                    }
                 }
             }
         }
-        stage('Login to ACR & Push Image') {
-            steps {
-                withCredentials([azureServicePrincipal(credentialsId: 'azure-sp',
-                                                       subscriptionIdVariable: 'AZURE_SUBSCRIPTION_ID',
-                                                       clientIdVariable: 'AZURE_CLIENT_ID',
-                                                       clientSecretVariable: 'AZURE_CLIENT_SECRET',
-                                                       tenantIdVariable: 'AZURE_TENANT_ID')]) {
 
-                    sh 'az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID'
-                    sh 'az acr login --name $ACR_NAME'
-                    sh "docker push ${env.FULL_IMAGE_TAG}"
-                    sh "docker push ${env.ACR_NAME}.azurecr.io/${env.IMAGE_NAME}:latest"
-                }
-            }
-        }
-        stage('Deploy to Azure App Service') {
+        stage('Deploy to Azure') { // Step 4: Tell Azure to deploy the new image
             steps {
-                withCredentials([azureServicePrincipal(credentialsId: 'azure-sp',
-                                                       subscriptionIdVariable: 'AZURE_SUBSCRIPTION_ID',
-                                                       clientIdVariable: 'AZURE_CLIENT_ID',
-                                                       clientSecretVariable: 'AZURE_CLIENT_SECRET',
-                                                       tenantIdVariable: 'AZURE_TENANT_ID')]) {
-
-                    sh 'az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID'
-                    sh "az webapp config container set --name ${env.APP_SERVICE_NAME} --resource-group ${env.RESOURCE_GROUP} --docker-custom-image-name ${env.FULL_IMAGE_TAG}"
-                    sh "az webapp restart --name ${env.APP_SERVICE_NAME} --resource-group ${env.RESOURCE_GROUP}"
-                }
+                // This "pings" the secret URL and tells Azure to pull the :latest image
+                sh "curl -X POST '${env.WEBHOOK_URL}'"
             }
         }
     }
