@@ -1,60 +1,65 @@
 pipeline {
-    agent any // This means "run on any available Jenkins machine"
+    agent any // Run on any available agent
 
     // --- CONFIGURATION ---
-    // This is where we store our secret values
+    // !! CHANGE THESE VALUES !!
     environment {
-        // !! YOU MUST EDIT THIS !!
         // Paste your Container Registry name from Step 1C
-        ACR_NAME           = "myuniqueacrnish1011"  
-
-        // !! YOU MUST EDIT THIS !!
+        ACR_NAME           = "myuniqueacrnish1011"  // <-- EDIT THIS
         // Paste your App Service Webhook URL from Step 1E
-        WEBHOOK_URL        = "https://$myuniqueappnish1110:RZmiLBuTi6FYJikMGCsChwoBXWAm5m3mlrEoRwNBFdm9sCRyEP4Es4muynbF@myuniqueappnish1110-avbyemh2gxh2eghm.scm.malaysiawest-01.azurewebsites.net/api/registry/webhook" 
-
+        WEBHOOK_URL        = "https://$myuniqueappnish1110:RZmiLBuTi6FYJikMGCsChwoBXWAm5m3mlrEoRwNBFdm9sCRyEP4Es4muynbF@myuniqueappnish1110-avbyemh2gxh2eghm.scm.malaysiawest-01.azurewebsites.net/api/registry/webhook" // <-- EDIT THIS
+        
+        // Paste your ACR Username (which is your ACR_NAME)
+        ACR_USERNAME       = "myuniqueacrnish1011" // <-- EDIT THIS
+        
         IMAGE_NAME         = "my-web-app"
-        ACR_CREDS_ID       = "acr-creds" // The 'nickname' we will create in Jenkins
+        ACR_PASSWORD_ID    = "acr-password" // The 'Secret Text' ID we just made
     }
     // ---------------------
 
-    stages { // The list of steps for the chef
-
-        stage('Checkout') { // Step 1: Get the code
+    stages {
+        stage('Checkout') {
             steps { 
-                checkout scm // This checks out the code from this GitHub repo
+                checkout scm 
             }
         }
-
-        stage('Build & Test') { // Step 2: Install dependencies and test
+        
+        stage('Build & Test') {
             steps {
-                docker.image('node:18-alpine').inside {
-                    sh 'npm install' // Runs 'npm install' inside a Node container
-                    sh 'npm test'    // Runs the 'test' script from package.json
-                }
+                // We will run all docker commands manually
+                // This builds a temporary image to run 'npm install'
+                sh "docker build -t my-app-builder -f Dockerfile.build ."
+                // This runs the test script inside the new builder image
+                sh "docker run my-app-builder" // This runs the CMD ["npm", "test"]
             }
         }
 
-        stage('Build & Push to ACR') { // Step 3: Build the Docker image and push to Azure
+        stage('Build & Push to ACR') {
             steps {
                 script {
-                    // Create unique names for the image
+                    // Define the unique tags for this build
                     def fullImageTag = "${env.ACR_NAME}.azurecr.io/${env.IMAGE_NAME}:build-${env.BUILD_NUMBER}"
                     def latestImageTag = "${env.ACR_NAME}.azurecr.io/${env.IMAGE_NAME}:latest"
-
-                    sh "docker build -t ${fullImageTag} -t ${latestImageTag} ." // Build the image
-
-                    // Log in to Azure and push the image
-                    docker.withRegistry("https://${env.ACR_NAME}.azurecr.io", env.ACR_CREDS_ID) {
-                        sh "docker push ${fullImageTag}"
-                        sh "docker push ${latestImageTag}"
+                    
+                    // Build the final production image (uses the main Dockerfile)
+                    sh "docker build -t ${fullImageTag} -t ${latestImageTag} ."
+                    
+                    // Use the 'acr-password' secret text to log in
+                    // This is a plain shell command, it needs no plugins
+                    withCredentials([string(credentialsId: env.ACR_PASSWORD_ID, variable: 'ACR_PASSWORD')]) {
+                        sh "echo $ACR_PASSWORD | docker login ${env.ACR_NAME}.azurecr.io -u ${env.ACR_USERNAME} --password-stdin"
                     }
+                    
+                    // Push the images
+                    sh "docker push ${fullImageTag}"
+                    sh "docker push ${latestImageTag}"
                 }
             }
         }
 
-        stage('Deploy to Azure') { // Step 4: Tell Azure to deploy the new image
+        stage('Deploy to Azure') {
             steps {
-                // This "pings" the secret URL and tells Azure to pull the :latest image
+                // This step is the same and requires NO PLUGINS
                 sh "curl -X POST '${env.WEBHOOK_URL}'"
             }
         }
