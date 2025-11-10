@@ -1,0 +1,8 @@
+# This Dockerfile is ONLY for building and testing.
+FROM node:18-alpine
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install
+COPY . .
+# The default command will be 'npm test'
+CMD [ "npm", "test" ]
